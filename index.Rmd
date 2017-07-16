@@ -1,0 +1,103 @@
+---
+title: "Predicting How Well a Set of Exercises is Performed"
+author: "Kiril Raytchev"
+date: '16/07/2017'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Summary
+The goal of this report is to predict the manner in which a set of exercises is performed. This is the "classe" variable in the provided data set. The process of variables selection to predict with is also provided.  
+The following topics are discussed:  
+
+  * how the model is built;  
+  * how cross validation is used;  
+  * the expected out of sample error;  
+  * substantiation of the choices made. 
+
+## Setting up data analyses program environment
+To ensure reproducibility we set the seed:
+```{r} 
+set.seed(11245)
+``` 
+The following libraries are loaded:
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(caret)
+library(mlbench)
+library(parallel)
+library(doParallel)
+library(rattle)
+library(broom)
+```
+In order to provide parallel processing for the calculations we dedicate one core for the OS and the rest for the data analyses program environment.
+```{r}
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+```
+
+## Data import and variable selection
+First we read training data set and convert `classe` variable to factor variable:
+```{r, message=FALSE, warning=FALSE}
+data <- read_csv("pml-training.csv", col_types = cols(
+        classe = col_factor(levels = c("A", "B", "C", "D", "E"))
+))
+```
+We decide to select columns which are more than 50% filled with values (!NAs) and drop the first 8 columns, which are filled with non-pertinent for the model variables like name, timestamp, row number etc.
+```{r, message=FALSE, warning=FALSE}
+obs <- nrow(data)
+NAsFillRate <- 0.5
+is_NAsFillRate <- function(x){
+        sum(is.na(x))/obs < NAsFillRate
+}
+training <- data %>% 
+        select_if(is_NAsFillRate) %>%
+        select(8:60) %>%
+        filter(!is.na(magnet_forearm_y))
+```
+We get a training set with `r nrow(training)` observations of `r ncol(training)` variables.
+
+## Model building
+
+We choose to use *k-fold* cross-validation with number of *folds = 10* and random forest method:
+
+```{r, message=FALSE, warning=FALSE, cache=TRUE}
+fitControl <- trainControl(method = "cv",
+                           number = 10,
+                           allowParallel = TRUE)
+
+rfFit <- train(x = training[ , -53], 
+               y = training$classe, 
+               method = "rf", 
+               data = training, 
+               trControl = fitControl)
+
+stopCluster(cluster)
+registerDoSEQ()
+```
+
+We get the following results:
+
+```{r}
+rfFit
+rfFit$resample
+plot(rfFit, main = "Accuracy by Predictor Count")
+confusionMatrix.train(rfFit)
+```
+
+Variable importance is seen on the following figure:
+```{r}
+varImpPlot(rfFit$finalModel, main = "Variable Importance Plot: Random Forest")
+```
+
+The expected error is *0.46%* as seen from the *out-of-bag* error estimation:
+```{r}
+rfFit$finalModel
+```
+
+### Conclusion
+
+The model is good to go for validation on the test data set.
